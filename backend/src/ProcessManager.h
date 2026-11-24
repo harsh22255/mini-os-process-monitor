@@ -5,6 +5,7 @@
 #include "ResourceMonitor.h"
 #include "AlertManager.h"
 #include "ActivityLogger.h"
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -12,6 +13,12 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#else
+#include <dirent.h>
+#include <signal.h>
+#include <fstream>
+#include <unistd.h>
+#endif
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -167,12 +174,16 @@ public:
                 return false;
             }
 
-            // Real Windows Process Termination via Win32 API
+            // Real Host Process Termination
+#ifdef _WIN32
             HANDLE hProc = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
             if (hProc) {
                 TerminateProcess(hProc, 1);
                 CloseHandle(hProc);
             }
+#else
+            kill(pid, SIGTERM);
+#endif
         }
 
         ProcessState old_state = proc->state;
@@ -278,71 +289,123 @@ public:
         return counts;
     }
 
-    // REAL WINDOWS HOST PROCESS SAMPLER
+    // REAL HOST PROCESS SAMPLER (Windows & Linux POSIX)
     void sample_real_host_processes(StateManager& state_mgr, ResourceMonitor& res_mon, 
                                    AlertManager& alert_mgr, ActivityLogger& logger) {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (hSnap == INVALID_HANDLE_VALUE) return;
-
-        PROCESSENTRY32 pe;
-        pe.dwSize = sizeof(PROCESSENTRY32);
-
         std::unordered_set<uint32_t> current_live_pids;
         double total_mem_mb = res_mon.get_total_memory();
-
         std::uniform_real_distribution<double> cpu_dist(0.1, 4.5);
 
-        if (Process32First(hSnap, &pe)) {
-            do {
-                uint32_t pid = pe.th32ProcessID;
-                current_live_pids.insert(pid);
-                std::string exeName = pe.szExeFile;
+#ifdef _WIN32
+        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (hSnap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32 pe;
+            pe.dwSize = sizeof(PROCESSENTRY32);
 
-                // Priority estimation from Windows base priority
-                int priority = std::max(1, std::min(10, (int)(pe.pcPriClassBase / 3)));
-                if (exeName == "csrss.exe" || exeName == "System") priority = 10;
+            if (Process32First(hSnap, &pe)) {
+                do {
+                    uint32_t pid = pe.th32ProcessID;
+                    current_live_pids.insert(pid);
+                    std::string exeName = pe.szExeFile;
 
-                // Query Real Memory (Working Set Size)
-                double mem_mb = 32.0;
-                HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-                if (hProc) {
-                    PROCESS_MEMORY_COUNTERS pmc;
-                    if (GetProcessMemoryInfo(hProc, &pmc, sizeof(pmc))) {
-                        mem_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+                    // Priority estimation from Windows base priority
+                    int priority = std::max(1, std::min(10, (int)(pe.pcPriClassBase / 3)));
+                    if (exeName == "csrss.exe" || exeName == "System") priority = 10;
+
+                    // Query Real Memory (Working Set Size)
+                    double mem_mb = 32.0;
+                    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                    if (hProc) {
+                        PROCESS_MEMORY_COUNTERS pmc;
+                        if (GetProcessMemoryInfo(hProc, &pmc, sizeof(pmc))) {
+                            mem_mb = pmc.WorkingSetSize / (1024.0 * 1024.0);
+                        }
+                        CloseHandle(hProc);
+                    } else {
+                        // Protected system process estimate
+                        mem_mb = std::max(48.0, (double)(pe.cntThreads * 8.0));
                     }
-                    CloseHandle(hProc);
-                } else {
-                    // Protected system process estimate
-                    mem_mb = std::max(48.0, (double)(pe.cntThreads * 8.0));
-                }
 
-                auto it = processes_.find(pid);
-                if (it == processes_.end()) {
-                    // New process discovered on host
-                    auto np = std::make_shared<Process>(pid, exeName, priority, 9999, mem_mb);
-                    np->state = ProcessState::RUNNING;
-                    np->thread_count = pe.cntThreads;
-                    np->update_resources(cpu_dist(rng_), mem_mb, total_mem_mb);
+                    auto it = processes_.find(pid);
+                    if (it == processes_.end()) {
+                        // New process discovered on host
+                        auto np = std::make_shared<Process>(pid, exeName, priority, 9999, mem_mb);
+                        np->state = ProcessState::RUNNING;
+                        np->thread_count = pe.cntThreads;
+                        np->update_resources(cpu_dist(rng_), mem_mb, total_mem_mb);
 
-                    state_mgr.record_transition(pid, exeName, ProcessState::NEW, ProcessState::RUNNING, "Host Process Discovered");
-                    processes_[pid] = np;
-                } else {
-                    // Update existing real process metrics
-                    auto proc = it->second;
-                    proc->thread_count = pe.cntThreads;
-                    proc->tick_execution();
-                    if (proc->state != ProcessState::TERMINATED && proc->state != ProcessState::SUSPENDED) {
-                        proc->state = (pe.cntThreads > 4) ? ProcessState::RUNNING : ProcessState::READY;
-                        double simulated_cpu = (proc->state == ProcessState::RUNNING) ? cpu_dist(rng_) : 0.1;
-                        proc->update_resources(simulated_cpu, mem_mb, total_mem_mb);
+                        state_mgr.record_transition(pid, exeName, ProcessState::NEW, ProcessState::RUNNING, "Host Process Discovered");
+                        processes_[pid] = np;
+                    } else {
+                        // Update existing real process metrics
+                        auto proc = it->second;
+                        proc->thread_count = pe.cntThreads;
+                        proc->tick_execution();
+                        if (proc->state != ProcessState::TERMINATED && proc->state != ProcessState::SUSPENDED) {
+                            proc->state = (pe.cntThreads > 4) ? ProcessState::RUNNING : ProcessState::READY;
+                            double simulated_cpu = (proc->state == ProcessState::RUNNING) ? cpu_dist(rng_) : 0.1;
+                            proc->update_resources(simulated_cpu, mem_mb, total_mem_mb);
+                        }
                     }
-                }
-            } while (Process32Next(hSnap, &pe));
+                } while (Process32Next(hSnap, &pe));
+            }
+            CloseHandle(hSnap);
         }
+#else
+        // Linux /proc directory scanner
+        DIR* proc_dir = opendir("/proc");
+        if (proc_dir) {
+            struct dirent* entry;
+            while ((entry = readdir(proc_dir)) != nullptr) {
+                if (entry->d_type == DT_DIR) {
+                    char* endptr;
+                    long pid_long = strtol(entry->d_name, &endptr, 10);
+                    if (*endptr == '\0' && pid_long > 0) {
+                        uint32_t pid = static_cast<uint32_t>(pid_long);
+                        current_live_pids.insert(pid);
 
-        CloseHandle(hSnap);
+                        std::string comm_path = std::string("/proc/") + entry->d_name + "/comm";
+                        std::ifstream comm_file(comm_path);
+                        std::string exeName = "proc_" + std::to_string(pid);
+                        if (comm_file.is_open()) {
+                            std::getline(comm_file, exeName);
+                        }
+
+                        double mem_mb = 48.0;
+                        std::string statm_path = std::string("/proc/") + entry->d_name + "/statm";
+                        std::ifstream statm_file(statm_path);
+                        if (statm_file.is_open()) {
+                            unsigned long size_pages, resident_pages;
+                            if (statm_file >> size_pages >> resident_pages) {
+                                mem_mb = (resident_pages * 4096.0) / (1024.0 * 1024.0);
+                            }
+                        }
+
+                        auto it = processes_.find(pid);
+                        if (it == processes_.end()) {
+                            auto np = std::make_shared<Process>(pid, exeName, 5, 9999, mem_mb);
+                            np->state = ProcessState::RUNNING;
+                            np->thread_count = 2;
+                            np->update_resources(cpu_dist(rng_), mem_mb, total_mem_mb);
+
+                            state_mgr.record_transition(pid, exeName, ProcessState::NEW, ProcessState::RUNNING, "Linux Host Task Discovered");
+                            processes_[pid] = np;
+                        } else {
+                            auto proc = it->second;
+                            proc->tick_execution();
+                            if (proc->state != ProcessState::TERMINATED && proc->state != ProcessState::SUSPENDED) {
+                                proc->state = ProcessState::RUNNING;
+                                proc->update_resources(cpu_dist(rng_), mem_mb, total_mem_mb);
+                            }
+                        }
+                    }
+                }
+            }
+            closedir(proc_dir);
+        }
+#endif
 
         // Detect terminated real processes
         for (auto& pair : processes_) {

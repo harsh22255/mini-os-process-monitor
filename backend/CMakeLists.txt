@@ -9,7 +9,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-add_definitions(-DASIO_STANDALONE -D_WIN32_WINNT=0x0601)
+add_definitions(-DASIO_STANDALONE)
 
 set(SOURCES
     src/main.cpp
@@ -18,5 +18,8 @@ set(SOURCES
 add_executable(mini_os_backend ${SOURCES})
 
 if(WIN32)
+    add_definitions(-D_WIN32_WINNT=0x0601)
     target_link_libraries(mini_os_backend PRIVATE ws2_32 mswsock psapi)
+else()
+    target_link_libraries(mini_os_backend PRIVATE pthread)
 endif()

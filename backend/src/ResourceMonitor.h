@@ -1,12 +1,18 @@
 #pragma once
 
 #include "OSProcess.h"
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <winsock2.h>
 #include <windows.h>
 #include <psapi.h>
+#else
+#include <sys/sysinfo.h>
+#include <fstream>
+#include <unistd.h>
+#endif
 #include <cstdint>
 #include <vector>
 #include <deque>
@@ -62,6 +68,7 @@ private:
 
     std::mt19937 rng_{std::random_device{}()};
 
+#ifdef _WIN32
     // Real Windows CPU measurement state
     FILETIME prev_idle_{0,0}, prev_kernel_{0,0}, prev_user_{0,0};
     bool first_cpu_sample_{true};
@@ -116,13 +123,66 @@ private:
             pct = static_cast<double>(memInfo.dwMemoryLoad);
         }
     }
+#else
+    uint64_t prev_linux_idle_{0}, prev_linux_total_{0};
+    bool first_linux_cpu_{true};
+
+    double sample_real_cpu() {
+        std::ifstream stat_file("/proc/stat");
+        if (stat_file.is_open()) {
+            std::string cpu_label;
+            uint64_t user = 0, nice = 0, system = 0, idle = 0, iowait = 0, irq = 0, softirq = 0;
+            if (stat_file >> cpu_label >> user >> nice >> system >> idle >> iowait >> irq >> softirq) {
+                uint64_t idle_time = idle + iowait;
+                uint64_t total_time = user + nice + system + idle + iowait + irq + softirq;
+
+                if (first_linux_cpu_) {
+                    prev_linux_idle_ = idle_time;
+                    prev_linux_total_ = total_time;
+                    first_linux_cpu_ = false;
+                    return 18.0;
+                }
+
+                uint64_t diff_idle = idle_time - prev_linux_idle_;
+                uint64_t diff_total = total_time - prev_linux_total_;
+                prev_linux_idle_ = idle_time;
+                prev_linux_total_ = total_time;
+
+                if (diff_total > 0) {
+                    double usage = 100.0 * (1.0 - (double)diff_idle / (double)diff_total);
+                    return std::max(0.0, std::min(100.0, usage));
+                }
+            }
+        }
+        return 18.0;
+    }
+
+    void sample_real_memory(double& total_mb, double& used_mb, double& pct) {
+        struct sysinfo si;
+        if (sysinfo(&si) == 0) {
+            total_mb = (si.totalram * si.mem_unit) / (1024.0 * 1024.0);
+            double free_mb = (si.freeram * si.mem_unit) / (1024.0 * 1024.0);
+            used_mb = total_mb - free_mb;
+            pct = (used_mb / total_mb) * 100.0;
+        } else {
+            total_mb = 16384.0;
+            used_mb = 4096.0;
+            pct = 25.0;
+        }
+    }
+#endif
 
 public:
     ResourceMonitor() {
         // Detect hardware cores
+        int cores = 8;
+#ifdef _WIN32
         SYSTEM_INFO sysInfo;
         GetSystemInfo(&sysInfo);
-        int cores = std::max(4, (int)sysInfo.dwNumberOfProcessors);
+        cores = std::max(4, (int)sysInfo.dwNumberOfProcessors);
+#else
+        cores = std::max(4, (int)sysconf(_SC_NPROCESSORS_ONLN));
+#endif
         core_utilization_.resize(cores, 10.0);
 
         // Initial memory probe

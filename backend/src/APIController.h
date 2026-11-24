@@ -373,10 +373,15 @@ public:
 
     void run(int port = 8080) {
         try {
-            std::cout << "[Mini OS Server] Initializing on http://127.0.0.1:" << port << std::endl;
+            if (const char* env_port = std::getenv("PORT")) {
+                try {
+                    port = std::stoi(env_port);
+                } catch (...) {}
+            }
+            std::cout << "[Mini OS Server] Initializing on http://0.0.0.0:" << port << std::endl;
             crow_app_.validate();
             std::cout << "[Mini OS Server] Routes validated successfully." << std::endl;
-            crow_app_.bindaddr("127.0.0.1").port(port).multithreaded().run();
+            crow_app_.bindaddr("0.0.0.0").port(port).multithreaded().run();
         } catch (const std::exception& e) {
             std::cerr << "[Mini OS Server] FATAL EXCEPTION: " << e.what() << std::endl;
         } catch (...) {
