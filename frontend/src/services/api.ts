@@ -1,6 +1,6 @@
 import { FullStateSnapshot, Process, ResourceMetrics, Alert, LogEntry, SystemSettings, SystemTopology, StateTransition } from '../types';
 
-const RAW_BACKEND = (import.meta.env.VITE_BACKEND_URL || '').trim();
+const RAW_BACKEND = (import.meta.env.VITE_BACKEND_URL || 'https://mini-os-process-monitor.onrender.com').trim();
 const API_BASE = RAW_BACKEND ? `${RAW_BACKEND.replace(/\/$/, '')}/api` : '/api';
 
 export const api = {
