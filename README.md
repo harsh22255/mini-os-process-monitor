@@ -234,21 +234,7 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 👥 Engineering Team & Academic Credits
 
-**Jaypee Institute of Information Technology, Noida**  
-*Department of Computer Science & Engineering and Information Technology*  
-*Course: Operating Systems & Advanced Software Engineering Lab (26B16CS312)*  
-*Mentor: Dr. Deepti Singh*
-
-| Enrolment No. | Student Name | Core Engineering Focus |
-| :--- | :--- | :--- |
-| **992401030404** | **Harshdeep Singh** | Lead Systems Engineer: C++ Concurrency, Preemptive Scheduler, Worker Thread |
-| **992401030395** | **Sanskriti Bhardwaj** | Kernel Telemetry: Win32 Hooks (`Toolhelp32`, `Psapi`), State Automaton Verifier |
-| **992401030392** | **Tejas Baranwal** | 3D Graphics Architect: WebGL Shaders, Three.js Geometries, Postprocessing |
-| **992401030415** | **Vandan Singh** | Full-Stack Network Lead: Crow REST/WebSocket API, React HUD, E2E Testing |
-
----
 
 ## 📄 License
 This project is licensed under the **MIT License** — feel free to explore, fork, and use it for academic and enterprise research.
