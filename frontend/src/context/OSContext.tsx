@@ -88,6 +88,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [connected, setConnected] = useState<boolean>(false);
   const [selectedPid, setSelectedPid] = useState<number | null>(null);
   const [visualMode, setVisualMode] = useState<'CINEMATIC' | 'PERFORMANCE' | 'ACCESSIBILITY'>('CINEMATIC');
+  const [preferredMode, setPreferredMode] = useState<'REAL_HOST' | 'SIMULATION'>('REAL_HOST');
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const wsRef = useRef<WebSocketManager | null>(null);
@@ -109,7 +110,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     try {
       const data = await api.getSnapshot();
       if (data && data.resources) {
-        setSnapshot(data);
+        setSnapshot(prev => ({
+          ...data,
+          operational_mode: prev.operational_mode || data.operational_mode
+        }));
         setConnected(true);
       }
     } catch (e) {
@@ -123,7 +127,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
     wsRef.current = new WebSocketManager(
       (newSnapshot) => {
-        setSnapshot(newSnapshot);
+        setSnapshot(prev => ({
+          ...newSnapshot,
+          operational_mode: prev.operational_mode || newSnapshot.operational_mode
+        }));
         setConnected(true);
       },
       (isConnected) => {
@@ -340,9 +347,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     });
   };
 
-  const operationalMode = snapshot?.operational_mode || 'SIMULATION';
+  const operationalMode = preferredMode;
 
   const setOperationalMode = async (mode: 'REAL_HOST' | 'SIMULATION') => {
+    setPreferredMode(mode);
+    setSnapshot(prev => ({ ...prev, operational_mode: mode }));
     try {
       const res = await api.setMode(mode);
       if (res && res.success) {
@@ -359,7 +368,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     } catch (e: any) {
       console.warn('Backend mode switch request failed, applying mode locally:', e);
     }
-    setSnapshot(prev => ({ ...prev, operational_mode: mode }));
     showToast(
       'info',
       'Operational Engine Switched',

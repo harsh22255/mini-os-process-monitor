@@ -12,7 +12,7 @@
 class APIController {
 private:
     OSMonitorApp& app_;
-    crow::SimpleApp crow_app_;
+    crow::App<crow::CORSHandler> crow_app_;
     std::mutex ws_mutex_;
     std::unordered_set<crow::websocket::connection*> ws_clients_;
 
@@ -21,20 +21,26 @@ private:
         res.set_header("Content-Type", "application/json");
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With");
         return res;
     }
 
     crow::response cors_options() {
-        crow::response res(204);
+        crow::response res(200);
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Requested-With");
         return res;
     }
 
 public:
     APIController(OSMonitorApp& app) : app_(app) {
+        auto& cors = crow_app_.get_middleware<crow::CORSHandler>();
+        cors.global()
+            .origin("*")
+            .methods("POST"_method, "GET"_method, "OPTIONS"_method, "PUT"_method, "DELETE"_method)
+            .headers("Content-Type", "Authorization", "Accept", "X-Requested-With");
+
         setup_routes();
         setup_websocket();
 
