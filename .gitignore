@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production build outputs
+dist/
+frontend/dist/
+
+# C++ Build outputs & binaries
+backend/build/
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+
+# Local tools downloaded for local Windows compiling
+tools/
+
+# Environment and IDE files
+.env
+.env.local
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
